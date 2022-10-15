@@ -1,30 +1,82 @@
 #!/usr/bin/python3
-# Fabfile to delete out-of-date archives.
+"""
+    Deploys an archive to web servers
+"""
+from fabric.operations import env, local, put, run
+from datetime import datetime
 import os
-from fabric.api import *
-
-env.hosts = ["104.196.50.234", "35.237.11.53"]
+from fabric.context_managers import lcd
 
 
-def do_clean(number=0):
-    """Delete out-of-date archives.
+env.hosts = ["34.148.182.81", "3.235.177.10"]
+env.user = "ubuntu"
 
-    Args:
-        number (int): The number of archives to keep.
 
-    If number is 0 or 1, keeps only the most recent archive. If
-    number is 2, keeps the most and second-most recent archives,
-    etc.
+def do_pack():
     """
-    number = 1 if int(number) == 0 else int(number)
+        Tarballs content in web_static folder
+    """
 
-    archives = sorted(os.listdir("versions"))
-    [archives.pop() for i in range(number)]
-    with lcd("versions"):
-        [local("rm ./{}".format(a)) for a in archives]
+    time = datetime.now().strftime("%Y%m%d%H%M%S")
+    name = "versions/web_static_{}.tgz".format(time)
+    local("mkdir -p versions")
+    packing = local("tar -czvf {} web_static".format(name))
+    if packing.succeeded:
+        return name
+    else:
+        return None
 
-    with cd("/data/web_static/releases"):
-        archives = run("ls -tr").split()
-        archives = [a for a in archives if "web_static_" in a]
-        [archives.pop() for i in range(number)]
-        [run("rm -rf ./{}".format(a)) for a in archives]
+
+def do_deploy(archive_path):
+    """
+        Deploys packed content to servers
+    """
+    if os.path.exists(archive_path) is not True:
+        return False
+    if not put(archive_path, "/tmp/").succeeded:
+        return False
+
+    filename = archive_path[9:]
+    foldername = "/data/web_static/releases/" + filename[:-4]
+    filename = "/tmp/" + filename
+
+    if run("mkdir -p {}".format(foldername)).failed:
+        return False
+    if run("tar -zxf {} -C {}". format(filename, foldername)).failed:
+        return False
+    if run("rm {}".format(filename)).failed:
+        return False
+    if run('mv {}/web_static/* {}'.format(foldername, foldername)).failed:
+        return False
+    if run("rm -rf {}/web_static".format(foldername)).failed:
+        return False
+    if run("rm -rf /data/web_static/current").failed:
+        return False
+    if run("ln -s {} /data/web_static/current".format(foldername)).failed:
+        return False
+
+    return True
+
+
+def deploy():
+    """
+        Deploy function for pack and do_deploy
+    """
+    path = do_pack()
+
+    if path is False:
+        return False
+
+    return do_deploy(path)
+
+
+def do_clean():
+    """
+        Cleans the version directory by deleting outdated archives
+    """
+    files = local("ls -ltr")
+    print(len(files))
+
+
+if __name__ == "__main__":
+    do_pack()
